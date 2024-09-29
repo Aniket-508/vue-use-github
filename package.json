@@ -1,0 +1,56 @@
+{
+  "name": "vue-use-github",
+  "private": false,
+  "version": "0.0.0",
+  "description": "Vue composable for fetching activities and information via GitHub API",
+  "author": "Aniket Pawar <https://github.com/Aniket-508>",
+  "keywords": [
+    "vue",
+    "github",
+    "composable",
+    "github-vue-api",
+    "rest-api"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aniket-508/vue-use-github.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/use-github.umd.cjs",
+  "module": "./dist/use-github.js",
+  "exports": {
+    ".": {
+      "import": "./dist/use-github.js",
+      "require": "./dist/use-github.umd.cjs"
+    }
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "vue": "^3.4.37"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.4",
+    "@vitejs/plugin-vue": "^5.1.2",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.1",
+    "vue-tsc": "^2.0.29"
+  },
+  "peerDependencies": {
+    "@vue/composition-api": "^1.0.0-beta.1",
+    "vue": "^2.0.0 || >=3.0.0-rc.0"
+  },
+  "peerDependenciesMeta": {
+    "@vue/composition-api": {
+      "optional": true
+    }
+  }
+}
