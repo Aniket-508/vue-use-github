@@ -6,8 +6,11 @@
   "author": "Aniket Pawar <https://github.com/Aniket-508>",
   "keywords": [
     "vue",
+    "vuejs",
+    "vue3",
     "github",
     "composable",
+    "vue-composable",
     "github-vue-api",
     "rest-api"
   ],
@@ -42,6 +45,7 @@
     "@vitejs/plugin-vue": "^5.1.2",
     "typescript": "^5.5.3",
     "vite": "^5.4.1",
+    "vite-plugin-dts": "^4.2.3",
     "vue-tsc": "^2.0.29"
   },
   "peerDependencies": {

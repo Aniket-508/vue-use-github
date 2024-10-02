@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src/composables",
+    "moduleResolution": "node"
+  },
+  "include": ["src/composables/**/*"],
+  "exclude": [
+    "node_modules",
+    "src/App.vue",
+    "src/main.ts",
+    "src/components/*",
+    "src/components/**/*",
+    "src/helpers/*"
+  ]
+}
