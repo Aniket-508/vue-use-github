@@ -1,7 +1,7 @@
 {
   "name": "vue-use-github",
   "private": false,
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Vue composable for fetching activities and information via GitHub API",
   "author": "Aniket Pawar <https://github.com/Aniket-508>",
   "keywords": [
