@@ -1,17 +1,11 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "noEmit": false,
     "outDir": "./dist",
     "rootDir": "./src/composables",
     "moduleResolution": "node"
   },
   "include": ["src/composables/**/*"],
-  "exclude": [
-    "node_modules",
-    "src/App.vue",
-    "src/main.ts",
-    "src/components/*",
-    "src/components/**/*",
-    "src/helpers/*"
-  ]
+  "exclude": ["node_modules"]
 }
