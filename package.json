@@ -48,6 +48,7 @@
     "vue": "^3.4.37",
     "vue-tsc": "^2.0.29"
   },
+  "packageManager": "pnpm@10.28.2",
   "peerDependencies": {
     "vue": "^3.3.0"
   }
