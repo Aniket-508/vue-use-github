@@ -1,4 +1,4 @@
-import { Ref } from "vue";
+import type { ComputedRef, MaybeRefOrGetter, Ref } from "vue";
 
 export type ProgrammingLanguage =
   | "javascript"
@@ -17,48 +17,12 @@ export type ProgrammingLanguage =
   | "html"
   | "css"
   | "shell"
-  | "powershell"
-  | "scala"
-  | "r"
   | "dart"
-  | "lua"
-  | "perl"
-  | "haskell"
-  | "julia"
-  | "elixir"
-  | "clojure"
-  | "erlang"
-  | "f#"
-  | "ocaml"
-  | "groovy"
-  | "matlab"
-  | "assembly"
-  | "visual basic"
-  | "objective-c"
-  | "fortran"
-  | "lisp"
-  | "prolog"
-  | "scheme"
-  | "cobol"
-  | "delphi"
-  | "pascal"
-  | "ada"
-  | "sql"
-  | "pl/sql"
-  | "t-sql"
-  | "bash"
-  | "tcl"
-  | "verilog"
-  | "vhdl"
-  | "smalltalk"
-  | "elm"
-  | "coffeescript"
-  | "vba"
-  | "apex";
+  | (string & {}); // eslint-disable-line @typescript-eslint/ban-types
 
 export interface IUseGitHubHookProps {
-  username: string;
-  personalAccessToken?: string;
+  username: MaybeRefOrGetter<string>;
+  personalAccessToken?: MaybeRefOrGetter<string | undefined>;
 }
 
 export interface LanguageDistribution {
@@ -66,43 +30,53 @@ export interface LanguageDistribution {
   percentage: number;
 }
 
-export type RepositoryGetter = {
-  (): IGitHubRepo[];
-  languageDistribution: () => LanguageDistribution[];
-};
+export interface RepositoryGroup {
+  repos: ComputedRef<IGitHubRepo[]>;
+  languageDistribution: ComputedRef<LanguageDistribution[]>;
+}
 
 export interface IGetRepositories {
-  all: RepositoryGetter;
-  withLanguage: (languages: ProgrammingLanguage[]) => RepositoryGetter;
-  top: (n: number) => RepositoryGetter;
-  pinned: RepositoryGetter;
+  all: RepositoryGroup;
+  withLanguage: (languages: ProgrammingLanguage[]) => RepositoryGroup;
+  top: (n: number) => RepositoryGroup;
+  pinned: RepositoryGroup;
 }
 
 export interface IUseGitHubHookReturn {
   metadata: Ref<IUseGitHubHookMetadata | null>;
   userInfo: Ref<IGitHubUserInfo | null>;
-  followers: Ref<IGitHubUserInfo[] | null>;
-  followings: Ref<IGitHubUserInfo[] | null>;
+  repositories: Ref<IGitHubRepo[]>;
+  pinnedRepositories: Ref<IGitHubRepo[]>;
+  followers: Ref<IGitHubUserSummary[]>;
+  followings: Ref<IGitHubUserSummary[]>;
   profileReadme: Ref<string | null>;
-  getRepositories: () => IGetRepositories;
+  isLoading: Ref<boolean>;
+  error: Ref<Error | null>;
+  refresh: () => Promise<void>;
+  getRepositories: IGetRepositories;
 }
 
 export interface IUseGitHubHookMetadata {
-  GITHUB_API_DATA: any;
-  GITHUB_REQUEST_CONFIG: any;
-  GITHUB_API_HEADERS: any;
-  GITHUB_API_REQUEST: any;
-  GITHUB_API_STATUS_CODE: number;
+  status: number;
+  rateLimit: {
+    limit: number;
+    remaining: number;
+    reset: number;
+  } | null;
 }
 
-export interface IGitHubUserInfo {
+export interface IGitHubUserSummary {
   login: string;
   id: number;
   node_id: string;
   avatar_url: string;
+  html_url: string;
+  type: string;
+}
+
+export interface IGitHubUserInfo extends IGitHubUserSummary {
   gravatar_id: string;
   url: string;
-  html_url: string;
   followers_url: string;
   following_url: string;
   gists_url: string;
@@ -112,7 +86,6 @@ export interface IGitHubUserInfo {
   repos_url: string;
   events_url: string;
   received_events_url: string;
-  type: string;
   site_admin: boolean;
   name: string | null;
   company: string | null;

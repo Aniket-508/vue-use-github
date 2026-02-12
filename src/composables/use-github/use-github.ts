@@ -1,100 +1,146 @@
-import { computed, onMounted, Ref, ref } from "vue";
-import axios from "axios";
+import {
+  computed,
+  onScopeDispose,
+  ref,
+  toValue,
+  watch,
+  type ComputedRef,
+  type Ref,
+} from "vue";
 import type {
   IGitHubUserInfo,
+  IGitHubUserSummary,
   IUseGitHubHookMetadata,
   IUseGitHubHookProps,
   IUseGitHubHookReturn,
   IGitHubRepo,
-  ProgrammingLanguage,
-  LanguageDistribution,
   IGetRepositories,
-  RepositoryGetter,
+  RepositoryGroup,
+  ProgrammingLanguage,
 } from "./interfaces/global";
 
-const GITHUB_REST_URL: string = "https://api.github.com";
-const GITHUB_GRAPHQL_URL: string = "https://api.github.com/graphql";
-const GITHUB_RAW_CONTENT_URL: string = "https://raw.githubusercontent.com";
+const GITHUB_REST_URL = "https://api.github.com";
+const GITHUB_GRAPHQL_URL = "https://api.github.com/graphql";
+const GITHUB_RAW_CONTENT_URL = "https://raw.githubusercontent.com";
 
-export const useGitHub = ({
-  username,
-  personalAccessToken,
-}: IUseGitHubHookProps): IUseGitHubHookReturn => {
+const isAbortError = (e: unknown): boolean =>
+  e instanceof DOMException && e.name === "AbortError";
+
+async function request<T>(url: string, init?: RequestInit): Promise<{ data: T; response: Response }> {
+  const response = await fetch(url, init);
+  if (!response.ok) {
+    throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
+  }
+  const data = (await response.json()) as T;
+  return { data, response };
+}
+
+export function useGitHub(options: IUseGitHubHookProps): IUseGitHubHookReturn {
   const metadata = ref<IUseGitHubHookMetadata | null>(null);
   const userInfo = ref<IGitHubUserInfo | null>(null);
   const repositories = ref<IGitHubRepo[]>([]);
   const pinnedRepositories = ref<IGitHubRepo[]>([]);
-  const followers = ref<IGitHubUserInfo[]>([]);
-  const followings = ref<IGitHubUserInfo[]>([]);
+  const followers = ref<IGitHubUserSummary[]>([]);
+  const followings = ref<IGitHubUserSummary[]>([]);
   const profileReadme = ref<string | null>(null);
+  const isLoading = ref(false);
+  const error = ref<Error | null>(null);
 
-  const axiosHeaders = computed(() => ({
+  const resolvedUsername = computed(() => toValue(options.username));
+  const resolvedToken = computed(() =>
+    options.personalAccessToken
+      ? toValue(options.personalAccessToken)
+      : undefined,
+  );
+
+  const headers = computed<Record<string, string>>(() => ({
     Accept: "application/vnd.github+json",
-    Authorization: "Bearer " + personalAccessToken,
+    ...(resolvedToken.value
+      ? { Authorization: `Bearer ${resolvedToken.value}` }
+      : {}),
   }));
 
-  const fetchGitHubData = async (): Promise<IUseGitHubHookMetadata | null> => {
-    if (!username) return null;
-    try {
-      const response = await axios.get(`${GITHUB_REST_URL}/users/${username}`, {
-        headers: axiosHeaders.value,
+  let abortController: AbortController | null = null;
+
+  const resetState = () => {
+    metadata.value = null;
+    userInfo.value = null;
+    repositories.value = [];
+    pinnedRepositories.value = [];
+    followers.value = [];
+    followings.value = [];
+    profileReadme.value = null;
+  };
+
+  const fetchUserInfo = async (signal: AbortSignal) => {
+    const user = resolvedUsername.value;
+    if (!user) return;
+
+    const { data, response } = await request<IGitHubUserInfo>(
+      `${GITHUB_REST_URL}/users/${user}`,
+      { headers: headers.value, signal },
+    );
+
+    userInfo.value = data;
+    metadata.value = {
+      status: response.status,
+      rateLimit: response.headers.get("x-ratelimit-limit")
+        ? {
+            limit: Number(response.headers.get("x-ratelimit-limit")),
+            remaining: Number(response.headers.get("x-ratelimit-remaining")),
+            reset: Number(response.headers.get("x-ratelimit-reset")),
+          }
+        : null,
+    };
+  };
+
+  const fetchRepositories = async (signal: AbortSignal) => {
+    const user = resolvedUsername.value;
+    if (!user) return;
+
+    const allRepos: IGitHubRepo[] = [];
+    let page = 1;
+    const maxPages = 10;
+
+    while (page <= maxPages) {
+      const params = new URLSearchParams({
+        per_page: "100",
+        sort: "updated",
+        page: String(page),
       });
-      const { data, config, headers, request, status } = response;
-      metadata.value = <IUseGitHubHookMetadata>{
-        GITHUB_API_DATA: data,
-        GITHUB_REQUEST_CONFIG: config,
-        GITHUB_API_HEADERS: headers,
-        GITHUB_API_REQUEST: request,
-        GITHUB_API_STATUS_CODE: status,
-      };
-      return metadata.value;
-    } catch (error) {
-      console.error("Error while fetching GitHub user info:", error);
-      return null;
-    }
-  };
 
-  const updateUserInfo = (meta: IUseGitHubHookMetadata) => {
-    if (meta && meta.GITHUB_API_STATUS_CODE === 200) {
-      userInfo.value = meta.GITHUB_API_DATA as IGitHubUserInfo;
-    } else {
-      console.error(
-        "Error while fetching GitHub user info, Please check network tab for more info"
+      const { data } = await request<Record<string, unknown>[]>(
+        `${GITHUB_REST_URL}/users/${user}/repos?${params}`,
+        { headers: headers.value, signal },
       );
-      console.error(
-        "Getting status code",
-        meta ? meta.GITHUB_API_STATUS_CODE : "Unknown"
-      );
-      userInfo.value = null;
-    }
-  };
 
-  const fetchRepositories = async () => {
-    if (!username) return;
-    try {
-      const response = await axios.get(
-        `${GITHUB_REST_URL}/users/${username}/repos?per_page=100&sort=updated`,
-        { headers: axiosHeaders.value }
-      );
-      repositories.value = response.data.map((repo: any) => ({
+      const pageRepos: IGitHubRepo[] = data.map((repo) => ({
         ...repo,
         language: repo.language
-          ? (repo.language.toLowerCase() as ProgrammingLanguage)
+          ? String(repo.language).toLowerCase()
           : null,
-      }));
-    } catch (error) {
-      console.error("Error while fetching repositories:", error);
+      })) as IGitHubRepo[];
+
+      allRepos.push(...pageRepos);
+      if (pageRepos.length < 100) break;
+      page++;
     }
+
+    repositories.value = allRepos;
   };
 
-  const fetchPinnedRepositories = async () => {
-    if (!username || !personalAccessToken) return;
+  const fetchPinnedRepositories = async (signal: AbortSignal) => {
+    const user = resolvedUsername.value;
+    const token = resolvedToken.value;
+    if (!user || !token) return;
+
     const query = `
-      query {
-        user(login: "${username}") {
+      query($login: String!) {
+        user(login: $login) {
           pinnedItems(first: 6, types: REPOSITORY) {
             nodes {
               ... on Repository {
+                databaseId
                 id
                 name
                 description
@@ -110,145 +156,259 @@ export const useGitHub = ({
         }
       }
     `;
-    try {
-      const response = await axios.post(
-        GITHUB_GRAPHQL_URL,
-        { query },
-        { headers: axiosHeaders.value }
-      );
 
-      pinnedRepositories.value = response.data.data.user.pinnedItems.nodes.map(
-        (repo: any) => ({
-          id: repo.id,
-          name: repo.name,
-          description: repo.description,
-          html_url: repo.url,
-          stargazers_count: repo.stargazerCount,
-          forks_count: repo.forkCount,
-          language: repo.primaryLanguage
-            ? (repo.primaryLanguage.name.toLowerCase() as ProgrammingLanguage)
-            : null,
-        })
-      );
-    } catch (error) {
-      console.error("Error while fetching pinned repositories:", error);
-    }
-  };
-
-  const fetchFollowers = async () => {
-    if (!username) return;
-    try {
-      const response = await axios.get(
-        `${GITHUB_REST_URL}/users/${username}/followers?per_page=100`,
-        { headers: axiosHeaders.value }
-      );
-      const followerPromises = response.data.map((follower: { url: string }) =>
-        axios.get(follower.url, { headers: axiosHeaders.value })
-      );
-      const followerResponses = await Promise.all(followerPromises);
-      followers.value = followerResponses.map((response) => response.data);
-    } catch (error) {
-      console.error("Error while fetching followers:", error);
-    }
-  };
-
-  const fetchFollowings = async () => {
-    if (!username) return;
-    try {
-      const response = await axios.get(
-        `${GITHUB_REST_URL}/users/${username}/following?per_page=100`,
-        { headers: axiosHeaders.value }
-      );
-      const followingPromises = response.data.map(
-        (following: { url: string }) =>
-          axios.get(following.url, { headers: axiosHeaders.value })
-      );
-      const followingResponses = await Promise.all(followingPromises);
-      followings.value = followingResponses.map((response) => response.data);
-    } catch (error) {
-      console.error("Error while fetching followings:", error);
-    }
-  };
-
-  const fetchProfileReadme = async () => {
-    if (!username) return;
-    try {
-      const response = await axios.get(
-        `${GITHUB_RAW_CONTENT_URL}/${username}/${username}/main/README.md`
-      );
-      profileReadme.value = response.data;
-    } catch (error) {
-      console.error("Error while fetching profile README:", error);
-      profileReadme.value = null;
-    }
-  };
-
-  const calculateLanguageDistribution = (
-    repos: Ref<IGitHubRepo[]>
-  ): LanguageDistribution[] => {
-    const languageCounts: { [key in ProgrammingLanguage]?: number } = {};
-    let totalCount = 0;
-
-    repos.value.forEach((repo) => {
-      if (repo.language) {
-        languageCounts[repo.language] =
-          (languageCounts[repo.language] || 0) + 1;
-        totalCount++;
-      }
+    const { data } = await request<{
+      data: { user: { pinnedItems: { nodes: Record<string, unknown>[] } } };
+    }>(GITHUB_GRAPHQL_URL, {
+      method: "POST",
+      headers: { ...headers.value, "Content-Type": "application/json" },
+      body: JSON.stringify({ query, variables: { login: user } }),
+      signal,
     });
 
-    return Object.entries(languageCounts).map(([language, count]) => ({
-      language: language as ProgrammingLanguage,
-      percentage: count! / totalCount,
+    const nodes = data?.data?.user?.pinnedItems?.nodes ?? [];
+
+    pinnedRepositories.value = nodes.map((repo) => ({
+      id: typeof repo.databaseId === "number" ? repo.databaseId : 0,
+      node_id: String(repo.id ?? ""),
+      name: String(repo.name ?? ""),
+      full_name: `${user}/${repo.name}`,
+      private: false,
+      owner: {
+        login: user,
+        id: 0,
+        avatar_url: "",
+        url: "",
+        html_url: `https://github.com/${user}`,
+      },
+      html_url: String(repo.url ?? ""),
+      description: repo.description != null ? String(repo.description) : null,
+      fork: false,
+      url: "",
+      created_at: "",
+      updated_at: "",
+      pushed_at: "",
+      homepage: null,
+      size: 0,
+      stargazers_count: (repo.stargazerCount as number) ?? 0,
+      watchers_count: 0,
+      language: repo.primaryLanguage
+        ? String(
+            (repo.primaryLanguage as { name: string }).name,
+          ).toLowerCase()
+        : null,
+      forks_count: (repo.forkCount as number) ?? 0,
+      open_issues_count: 0,
+      license: null,
+      topics: [],
+      visibility: "public",
+      default_branch: "main",
     }));
   };
 
-  const getRepositories = (): IGetRepositories => {
-    const createRepositoryGetter = (
-      reposRef: () => Ref<IGitHubRepo[]>
-    ): RepositoryGetter => {
-      const getter = reposRef as any;
-      getter.languageDistribution = () =>
-        calculateLanguageDistribution(reposRef());
-      return getter;
-    };
+  const fetchFollowers = async (signal: AbortSignal) => {
+    const user = resolvedUsername.value;
+    if (!user) return;
 
-    return {
-      all: createRepositoryGetter(() => repositories),
-      withLanguage: (languages: ProgrammingLanguage[]) =>
-        createRepositoryGetter(() =>
-          computed(() =>
-            repositories.value.filter(
-              (repo) => repo.language && languages.includes(repo.language)
-            )
-          )
-        ),
-      top: (n: number) =>
-        createRepositoryGetter(() =>
-          computed(() => repositories.value.slice(0, n))
-        ),
-      pinned: createRepositoryGetter(() => pinnedRepositories),
-    };
+    const { data } = await request<Record<string, unknown>[]>(
+      `${GITHUB_REST_URL}/users/${user}/followers?per_page=100`,
+      { headers: headers.value, signal },
+    );
+
+    followers.value = data.map((u) => ({
+      login: String(u.login),
+      id: Number(u.id),
+      node_id: String(u.node_id),
+      avatar_url: String(u.avatar_url),
+      html_url: String(u.html_url),
+      type: String(u.type),
+    }));
   };
 
-  onMounted(async () => {
-    const meta = await fetchGitHubData();
-    if (meta) {
-      updateUserInfo(meta);
+  const fetchFollowings = async (signal: AbortSignal) => {
+    const user = resolvedUsername.value;
+    if (!user) return;
+
+    const { data } = await request<Record<string, unknown>[]>(
+      `${GITHUB_REST_URL}/users/${user}/following?per_page=100`,
+      { headers: headers.value, signal },
+    );
+
+    followings.value = data.map((u) => ({
+      login: String(u.login),
+      id: Number(u.id),
+      node_id: String(u.node_id),
+      avatar_url: String(u.avatar_url),
+      html_url: String(u.html_url),
+      type: String(u.type),
+    }));
+  };
+
+  const fetchProfileReadme = async (signal: AbortSignal) => {
+    const user = resolvedUsername.value;
+    if (!user) return;
+
+    const branches = ["main", "master"];
+    for (const branch of branches) {
+      try {
+        const response = await fetch(
+          `${GITHUB_RAW_CONTENT_URL}/${user}/${user}/${branch}/README.md`,
+          { signal },
+        );
+        if (!response.ok) continue;
+        profileReadme.value = await response.text();
+        return;
+      } catch {
+        // try next branch
+      }
     }
-    fetchRepositories();
-    fetchPinnedRepositories();
-    fetchFollowers();
-    fetchFollowings();
-    fetchProfileReadme();
+    profileReadme.value = null;
+  };
+
+  const createRepositoryGroup = (
+    source: Ref<IGitHubRepo[]> | ComputedRef<IGitHubRepo[]>,
+  ): RepositoryGroup => ({
+    repos: computed(() => source.value),
+    languageDistribution: computed(() => {
+      const counts: Record<string, number> = {};
+      let total = 0;
+
+      for (const repo of source.value) {
+        if (repo.language) {
+          counts[repo.language] = (counts[repo.language] ?? 0) + 1;
+          total++;
+        }
+      }
+
+      if (total === 0) return [];
+
+      return Object.entries(counts).map(([language, count]) => ({
+        language: language as ProgrammingLanguage,
+        percentage: count / total,
+      }));
+    }),
+  });
+
+  const withLanguageCache = new Map<string, RepositoryGroup>();
+  const topCache = new Map<number, RepositoryGroup>();
+
+  const getRepositories: IGetRepositories = {
+    all: createRepositoryGroup(repositories),
+
+    withLanguage: (languages: ProgrammingLanguage[]) => {
+      const key = [...languages].sort().join("\0");
+      let cached = withLanguageCache.get(key);
+      if (!cached) {
+        cached = createRepositoryGroup(
+          computed(() =>
+            repositories.value.filter(
+              (repo) =>
+                repo.language != null && languages.includes(repo.language),
+            ),
+          ),
+        );
+        withLanguageCache.set(key, cached);
+      }
+      return cached;
+    },
+
+    top: (n: number) => {
+      let cached = topCache.get(n);
+      if (!cached) {
+        cached = createRepositoryGroup(
+          computed(() => repositories.value.slice(0, n)),
+        );
+        topCache.set(n, cached);
+      }
+      return cached;
+    },
+
+    pinned: createRepositoryGroup(pinnedRepositories),
+  };
+
+  const refresh = async () => {
+    const user = resolvedUsername.value;
+    if (!user) {
+      resetState();
+      return;
+    }
+
+    abortController?.abort();
+    const controller = new AbortController();
+    abortController = controller;
+
+    resetState();
+    isLoading.value = true;
+    error.value = null;
+
+    try {
+      await fetchUserInfo(controller.signal);
+      if (controller.signal.aborted) return;
+
+      const results = await Promise.allSettled([
+        fetchRepositories(controller.signal),
+        fetchPinnedRepositories(controller.signal),
+        fetchFollowers(controller.signal),
+        fetchFollowings(controller.signal),
+        fetchProfileReadme(controller.signal),
+      ]);
+
+      if (controller.signal.aborted) return;
+
+      const errors = results
+        .filter(
+          (r): r is PromiseRejectedResult => r.status === "rejected",
+        )
+        .map((r) => r.reason)
+        .filter((e) => !isAbortError(e));
+
+      if (errors.length > 0) {
+        error.value =
+          errors[0] instanceof Error
+            ? errors[0]
+            : new Error(String(errors[0]));
+      }
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      error.value =
+        err instanceof Error ? err : new Error(String(err));
+    } finally {
+      if (!controller.signal.aborted) {
+        isLoading.value = false;
+      }
+    }
+  };
+
+  watch(
+    [resolvedUsername, resolvedToken],
+    () => {
+      if (resolvedUsername.value) {
+        refresh();
+      } else {
+        abortController?.abort();
+        resetState();
+        isLoading.value = false;
+        error.value = null;
+      }
+    },
+    { immediate: true },
+  );
+
+  onScopeDispose(() => {
+    abortController?.abort();
   });
 
   return {
     metadata,
     userInfo,
+    repositories,
+    pinnedRepositories,
     followers,
     followings,
     profileReadme,
+    isLoading,
+    error,
+    refresh,
     getRepositories,
   };
-};
+}
